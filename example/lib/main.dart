@@ -1,4 +1,4 @@
-// ignore_for_file: avoid_print
+// ignore_for_file: avoid_print, prefer_const_constructors
 
 import 'dart:math';
 import 'dart:typed_data';
@@ -9,6 +9,9 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:nearby_connections/nearby_connections.dart';
 import 'package:permission_handler/permission_handler.dart';
+
+// Import the Sample App Navigation file
+import 'sample_app_navigation.dart';
 
 void main() => runApp(const MyApp());
 
@@ -47,6 +50,10 @@ class _MyBodyState extends State<Body> {
 
   String? tempFileUri; //reference to the file currently being transferred
   Map<int, String> map = {}; //store filename mapped to corresponding payloadId
+  Map<String, String> endpointActivities = {}; //store activity status for each endpoint
+
+  // Add a variable to track the current activity of the user
+  String currentActivity = "Idle"; // Default activity
 
   @override
   Widget build(BuildContext context) {
@@ -193,6 +200,7 @@ class _MyBodyState extends State<Body> {
                               "Disconnected: ${endpointMap[id]!.endpointName}, id $id");
                           setState(() {
                             endpointMap.remove(id);
+                            endpointActivities.remove(id);
                           });
                         },
                       );
@@ -246,6 +254,7 @@ class _MyBodyState extends State<Body> {
                                           onDisconnected: (id) {
                                             setState(() {
                                               endpointMap.remove(id);
+                                              endpointActivities.remove(id);
                                             });
                                             showSnackbar(
                                                 "Disconnected from: ${endpointMap[id]!.endpointName}, id $id");
@@ -285,8 +294,232 @@ class _MyBodyState extends State<Body> {
                 await Nearby().stopAllEndpoints();
                 setState(() {
                   endpointMap.clear();
+                  endpointActivities.clear();
                 });
               },
+            ),
+            const Divider(),
+            // Enhanced Connection Information Section
+            Card(
+              elevation: 4,
+              margin: const EdgeInsets.symmetric(vertical: 8.0),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.info_outline, color: Colors.blue),
+                        SizedBox(width: 8),
+                        Text(
+                          "Connection Information",
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    
+                    // My Current Activity
+                    Container(
+                      padding: const EdgeInsets.all(12.0),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.shade50,
+                        borderRadius: BorderRadius.circular(8.0),
+                        border: Border.all(color: Colors.blue.shade200),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.person, color: Colors.blue.shade600),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  "My Current Activity",
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  currentActivity,
+                                  style: TextStyle(
+                                    color: Colors.blue.shade800,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    
+                    const SizedBox(height: 16),
+                    
+                    // Connected Users Section
+                    const Row(
+                      children: [
+                        Icon(Icons.groups, color: Colors.green),
+                        SizedBox(width: 8),
+                        Text(
+                          "Connected Users",
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    
+                    // Users List
+                    if (endpointMap.isEmpty)
+                      Container(
+                        padding: const EdgeInsets.all(16.0),
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(8.0),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: const Column(
+                          children: [
+                            Icon(Icons.people_outline, 
+                                size: 32, color: Colors.grey),
+                            SizedBox(height: 8),
+                            Text(
+                              "No users connected",
+                              style: TextStyle(
+                                color: Colors.grey,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      ...endpointMap.entries.map((entry) {
+                        String endpointName = entry.value.endpointName;
+                        String status = endpointActivities[entry.key] ?? "Idle";
+                        
+                        // Activity status color and icon
+                        Color statusColor;
+                        IconData statusIcon;
+                        
+                        switch (status.toLowerCase()) {
+                          case 'idle':
+                            statusColor = Colors.grey;
+                            statusIcon = Icons.pause_circle_outline;
+                            break;
+                          case 'typing':
+                          case 'typing message':
+                          case 'writing notes':
+                            statusColor = Colors.orange;
+                            statusIcon = Icons.edit;
+                            break;
+                          case 'browsing home':
+                          case 'browsing photos':
+                          case 'browsing':
+                            statusColor = Colors.blue;
+                            statusIcon = Icons.explore;
+                            break;
+                          case 'viewing messages':
+                          case 'reading messages':
+                            statusColor = Colors.purple;
+                            statusIcon = Icons.message;
+                            break;
+                          case 'taking notes':
+                          case 'editing document':
+                          case 'editing profile':
+                            statusColor = Colors.green;
+                            statusIcon = Icons.note_alt;
+                            break;
+                          case 'filling form':
+                            statusColor = Colors.teal;
+                            statusIcon = Icons.assignment;
+                            break;
+                          case 'viewing page':
+                            statusColor = Colors.indigo;
+                            statusIcon = Icons.visibility;
+                            break;
+                          default:
+                            statusColor = Colors.grey;
+                            statusIcon = Icons.help_outline;
+                        }
+                        
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 8.0),
+                          padding: const EdgeInsets.all(12.0),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(8.0),
+                            border: Border.all(color: Colors.grey.shade300),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.grey.withOpacity(0.1),
+                                spreadRadius: 1,
+                                blurRadius: 2,
+                                offset: const Offset(0, 1),
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            children: [
+                              CircleAvatar(
+                                radius: 20,
+                                backgroundColor: statusColor.withOpacity(0.2),
+                                child: Icon(
+                                  statusIcon,
+                                  color: statusColor,
+                                  size: 20,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      endpointName,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      status,
+                                      style: TextStyle(
+                                        color: statusColor,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color: statusColor,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                  ],
+                ),
+              ),
             ),
             const Divider(),
             const Text(
@@ -333,6 +566,52 @@ class _MyBodyState extends State<Body> {
                     .toList()
                     .join('\n');
                 showSnackbar(files);
+              },
+            ),
+            ElevatedButton(
+              child: const Text("Select Activity"),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => ActivitySelectionScreen(
+                      onActivitySelected: (activity) {
+                        updateActivity(activity); // Update the activity and notify others
+                      },
+                    ),
+                  ),
+                );
+              },
+            ),
+            ElevatedButton(
+              child: const Text("Typing Activity"),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => TypingActivityScreen(
+                      onActivityUpdate: (activity) {
+                        updateActivity(activity); // Update the activity and notify others
+                      },
+                    ),
+                  ),
+                );
+              },
+            ),
+            // Add a button to navigate to the Sample App Navigation
+            ElevatedButton(
+              child: const Text("Sample App Navigation"),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => SampleAppNavigation(
+                      onActivityUpdate: (activity) {
+                        updateActivity(activity); // Update the activity and notify others
+                      },
+                    ),
+                  ),
+                );
               },
             ),
           ],
@@ -383,7 +662,7 @@ class _MyBodyState extends State<Body> {
                     onPayLoadRecieved: (endid, payload) async {
                       if (payload.type == PayloadType.BYTES) {
                         String str = String.fromCharCodes(payload.bytes!);
-                        showSnackbar("$endid: $str");
+                        // showSnackbar("$endid: $str");
 
                         if (str.contains(':')) {
                           // used for file payload as file payload is mapped as
@@ -401,6 +680,13 @@ class _MyBodyState extends State<Body> {
                             //add to map if not already
                             map[payloadId] = fileName;
                           }
+                        } else {
+                          // Handle activity status updates
+                          print("Received activity update from $endid: $str");
+                          setState(() {
+                            endpointActivities[endid] = str;
+                          });
+                          // showSnackbar("Activity update: ${endpointMap[endid]?.endpointName ?? endid} is now $str");
                         }
                       } else if (payload.type == PayloadType.FILE) {
                         showSnackbar("$endid: File transfer started");
@@ -417,8 +703,8 @@ class _MyBodyState extends State<Body> {
                         showSnackbar("$endid: FAILED to transfer file");
                       } else if (payloadTransferUpdate.status ==
                           PayloadStatus.SUCCESS) {
-                        showSnackbar(
-                            "$endid success, total bytes = ${payloadTransferUpdate.totalBytes}");
+                        // showSnackbar(
+                        //     "$endid success, total bytes = ${payloadTransferUpdate.totalBytes}");
 
                         if (map.containsKey(payloadTransferUpdate.id)) {
                           //rename the file now
@@ -448,6 +734,133 @@ class _MyBodyState extends State<Body> {
           ),
         );
       },
+    );
+  }
+
+  // Function to update the user's activity and notify connected devices
+  void updateActivity(String activity) {
+    setState(() {
+      currentActivity = activity;
+    });
+
+    print("Current Activity: $activity");
+    print("Sending activity to ${endpointMap.length} connected devices");
+
+    // Send the activity update to all connected devices
+    endpointMap.forEach((key, value) {
+      print("Sending '$activity' to ${value.endpointName} (ID: $key)");
+      Nearby().sendBytesPayload(key, Uint8List.fromList(activity.codeUnits));
+    });
+  }
+}
+
+// Define a new screen for activity selection
+class ActivitySelectionScreen extends StatelessWidget {
+  final Function(String) onActivitySelected;
+
+  const ActivitySelectionScreen({Key? key, required this.onActivitySelected}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    final activities = ["Idle", "Filling Form", "Viewing Page", "Editing Document", "Browsing"];
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Select Activity"),
+      ),
+      body: GridView.builder(
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2, // 2 buttons across
+          crossAxisSpacing: 8.0,
+          mainAxisSpacing: 8.0,
+        ),
+        padding: const EdgeInsets.all(16.0),
+        itemCount: activities.length,
+        itemBuilder: (context, index) {
+          return ElevatedButton(
+            onPressed: () {
+              onActivitySelected(activities[index]);
+              Navigator.pop(context); // Go back to the previous screen
+            },
+            child: Text(activities[index]),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// Add a dynamic typing activity widget
+class TypingActivityScreen extends StatefulWidget {
+  final Function(String) onActivityUpdate;
+
+  const TypingActivityScreen({Key? key, required this.onActivityUpdate}) : super(key: key);
+
+  @override
+  State<TypingActivityScreen> createState() => _TypingActivityScreenState();
+}
+
+class _TypingActivityScreenState extends State<TypingActivityScreen> {
+  final TextEditingController _controller = TextEditingController();
+  late FocusNode _focusNode;
+  bool _isTyping = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode = FocusNode();
+
+    // Listen to focus changes to detect typing activity
+    _focusNode.addListener(() {
+      if (_focusNode.hasFocus) {
+        widget.onActivityUpdate("Typing");
+        setState(() {
+          _isTyping = true;
+        });
+      } else {
+        widget.onActivityUpdate("Idle");
+        setState(() {
+          _isTyping = false;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Typing Activity"),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            TextField(
+              controller: _controller,
+              focusNode: _focusNode,
+              decoration: const InputDecoration(
+                hintText: "Start typing...",
+              ),
+              onChanged: (text) {
+                widget.onActivityUpdate("Typing");
+              },
+            ),
+            const SizedBox(height: 16.0),
+            Text(
+              _isTyping ? "You are typing..." : "You are idle.",
+              style: const TextStyle(fontSize: 16.0),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
