@@ -13,6 +13,19 @@ import 'package:permission_handler/permission_handler.dart';
 // Import the Sample App Navigation file
 import 'sample_app_navigation.dart';
 
+// Activity log entry model
+class ActivityLogEntry {
+  final String userName;
+  final String activity;
+  final DateTime timestamp;
+
+  ActivityLogEntry({
+    required this.userName,
+    required this.activity,
+    required this.timestamp,
+  });
+}
+
 void main() => runApp(const MyApp());
 
 class MyApp extends StatefulWidget {
@@ -51,6 +64,7 @@ class _MyBodyState extends State<Body> {
   String? tempFileUri; //reference to the file currently being transferred
   Map<int, String> map = {}; //store filename mapped to corresponding payloadId
   Map<String, String> endpointActivities = {}; //store activity status for each endpoint
+  List<ActivityLogEntry> activityLog = []; //store activity log entries
 
   // Add a variable to track the current activity of the user
   String currentActivity = "Idle"; // Default activity
@@ -614,6 +628,24 @@ class _MyBodyState extends State<Body> {
                 );
               },
             ),
+            ElevatedButton(
+              child: Text("View Activity Log (${activityLog.length} entries)"),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => ActivityLogScreen(
+                      activityLog: activityLog,
+                      onClearLog: () {
+                        setState(() {
+                          activityLog.clear();
+                        });
+                      },
+                    ),
+                  ),
+                );
+              },
+            ),
           ],
         ),
       ),
@@ -683,10 +715,17 @@ class _MyBodyState extends State<Body> {
                         } else {
                           // Handle activity status updates
                           print("Received activity update from $endid: $str");
+                          String endpointName = endpointMap[endid]?.endpointName ?? endid;
+                          
+                          // Only log if activity has changed
+                          String? previousActivity = endpointActivities[endid];
+                          if (previousActivity != str) {
+                            _logActivity(endpointName, str);
+                          }
+                          
                           setState(() {
                             endpointActivities[endid] = str;
                           });
-                          // showSnackbar("Activity update: ${endpointMap[endid]?.endpointName ?? endid} is now $str");
                         }
                       } else if (payload.type == PayloadType.FILE) {
                         showSnackbar("$endid: File transfer started");
@@ -737,8 +776,28 @@ class _MyBodyState extends State<Body> {
     );
   }
 
+  // Function to log activity with timestamp
+  void _logActivity(String userName, String activity) {
+    final logEntry = ActivityLogEntry(
+      userName: userName,
+      activity: activity,
+      timestamp: DateTime.now(),
+    );
+    
+    setState(() {
+      activityLog.add(logEntry);
+    });
+    
+    print("Auto-logged: $userName - $activity");
+  }
+
   // Function to update the user's activity and notify connected devices
   void updateActivity(String activity) {
+    // Only log if activity has changed
+    if (currentActivity != activity) {
+      _logActivity(userName, activity);
+    }
+    
     setState(() {
       currentActivity = activity;
     });
@@ -861,6 +920,338 @@ class _TypingActivityScreenState extends State<TypingActivityScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+// Activity Log Screen
+class ActivityLogScreen extends StatefulWidget {
+  final List<ActivityLogEntry> activityLog;
+  final VoidCallback onClearLog;
+
+  const ActivityLogScreen({
+    Key? key,
+    required this.activityLog,
+    required this.onClearLog,
+  }) : super(key: key);
+
+  @override
+  State<ActivityLogScreen> createState() => _ActivityLogScreenState();
+}
+
+class _ActivityLogScreenState extends State<ActivityLogScreen> {
+  Set<String> selectedUsers = <String>{};
+  bool showAllUsers = true;
+
+  @override
+  void initState() {
+    super.initState();
+    // Initially show all users
+    selectedUsers = widget.activityLog.map((entry) => entry.userName).toSet();
+  }
+
+  String _formatDateTime(DateTime dateTime) {
+    return "${dateTime.day}/${dateTime.month}/${dateTime.year} ${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}:${dateTime.second.toString().padLeft(2, '0')}";
+  }
+
+  List<ActivityLogEntry> _getFilteredLogs() {
+    if (showAllUsers) return widget.activityLog;
+    return widget.activityLog.where((entry) => selectedUsers.contains(entry.userName)).toList();
+  }
+
+  Set<String> _getAllUsers() {
+    return widget.activityLog.map((entry) => entry.userName).toSet();
+  }
+
+  void _showUserFilterDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final allUsers = _getAllUsers().toList()..sort();
+            
+            return AlertDialog(
+              title: const Text("Filter Users"),
+              content: SizedBox(
+                width: double.maxFinite,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CheckboxListTile(
+                      title: const Text("Show All Users"),
+                      value: showAllUsers,
+                      onChanged: (bool? value) {
+                        setDialogState(() {
+                          showAllUsers = value ?? true;
+                          if (showAllUsers) {
+                            selectedUsers = allUsers.toSet();
+                          }
+                        });
+                      },
+                    ),
+                    const Divider(),
+                    Flexible(
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: allUsers.map((user) {
+                          return CheckboxListTile(
+                            title: Text(user),
+                            value: selectedUsers.contains(user),
+                            enabled: !showAllUsers,
+                            onChanged: showAllUsers ? null : (bool? value) {
+                              setDialogState(() {
+                                if (value == true) {
+                                  selectedUsers.add(user);
+                                } else {
+                                  selectedUsers.remove(user);
+                                }
+                              });
+                            },
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text("Cancel"),
+                ),
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      // Apply the filter changes
+                    });
+                    Navigator.of(context).pop();
+                  },
+                  child: const Text("Apply"),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filteredLogs = _getFilteredLogs();
+    final allUsers = _getAllUsers();
+    
+    return Scaffold(
+      appBar: AppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("Activity Log"),
+            if (!showAllUsers && allUsers.isNotEmpty)
+              Text(
+                "${selectedUsers.length} of ${allUsers.length} users",
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
+              ),
+          ],
+        ),
+        actions: [
+          if (widget.activityLog.isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.filter_list),
+              onPressed: _showUserFilterDialog,
+              tooltip: "Filter Users",
+            ),
+          if (widget.activityLog.isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.clear_all),
+              onPressed: () {
+                showDialog(
+                  context: context,
+                  builder: (BuildContext context) {
+                    return AlertDialog(
+                      title: const Text("Clear Activity Log"),
+                      content: const Text("Are you sure you want to clear all activity log entries?"),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          child: const Text("Cancel"),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            widget.onClearLog();
+                            Navigator.of(context).pop();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text("Activity log cleared")),
+                            );
+                          },
+                          child: const Text("Clear"),
+                        ),
+                      ],
+                    );
+                  },
+                );
+              },
+            ),
+        ],
+      ),
+      body: widget.activityLog.isEmpty
+          ? const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.history,
+                    size: 64,
+                    color: Colors.grey,
+                  ),
+                  SizedBox(height: 16),
+                  Text(
+                    "No activity logged yet",
+                    style: TextStyle(
+                      fontSize: 18,
+                      color: Colors.grey,
+                    ),
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    "Activities will be logged automatically when they change",
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.grey,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ],
+              ),
+            )
+          : filteredLogs.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.filter_list_off,
+                        size: 64,
+                        color: Colors.grey,
+                      ),
+                      SizedBox(height: 16),
+                      Text(
+                        "No activities match the current filter",
+                        style: TextStyle(
+                          fontSize: 18,
+                          color: Colors.grey,
+                        ),
+                      ),
+                      SizedBox(height: 8),
+                      Text(
+                        "Try adjusting your user filter",
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.all(16.0),
+                  itemCount: filteredLogs.length,
+                  itemBuilder: (context, index) {
+                    final reversedIndex = filteredLogs.length - 1 - index;
+                    final entry = filteredLogs[reversedIndex];
+                
+                Color activityColor;
+                IconData activityIcon;
+                
+                switch (entry.activity.toLowerCase()) {
+                  case 'idle':
+                    activityColor = Colors.grey;
+                    activityIcon = Icons.pause_circle_outline;
+                    break;
+                  case 'typing':
+                  case 'typing message':
+                  case 'writing notes':
+                    activityColor = Colors.orange;
+                    activityIcon = Icons.edit;
+                    break;
+                  case 'browsing home':
+                  case 'browsing photos':
+                  case 'browsing':
+                    activityColor = Colors.blue;
+                    activityIcon = Icons.explore;
+                    break;
+                  case 'viewing messages':
+                  case 'reading messages':
+                    activityColor = Colors.purple;
+                    activityIcon = Icons.message;
+                    break;
+                  case 'taking notes':
+                  case 'editing document':
+                  case 'editing profile':
+                    activityColor = Colors.green;
+                    activityIcon = Icons.note_alt;
+                    break;
+                  case 'filling form':
+                    activityColor = Colors.teal;
+                    activityIcon = Icons.assignment;
+                    break;
+                  case 'viewing page':
+                    activityColor = Colors.indigo;
+                    activityIcon = Icons.visibility;
+                    break;
+                  default:
+                    activityColor = Colors.grey;
+                    activityIcon = Icons.help_outline;
+                }
+
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 8.0),
+                  child: ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: activityColor.withOpacity(0.2),
+                      child: Icon(
+                        activityIcon,
+                        color: activityColor,
+                        size: 20,
+                      ),
+                    ),
+                    title: Text(
+                      entry.userName,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          entry.activity,
+                          style: TextStyle(
+                            color: activityColor,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _formatDateTime(entry.timestamp),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                      ],
+                    ),
+                    trailing: Icon(
+                      Icons.access_time,
+                      color: Colors.grey.shade400,
+                      size: 16,
+                    ),
+                  ),
+                );
+              },
+            ),
     );
   }
 }
