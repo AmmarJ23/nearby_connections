@@ -1,5 +1,6 @@
 // ignore_for_file: avoid_print, prefer_const_constructors
 
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -9,9 +10,11 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:nearby_connections/nearby_connections.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:live_activities/live_activities.dart';
 
 // Import the Sample App Navigation file
 import 'sample_app_navigation.dart';
+import 'models/connection_status_live_activity_model.dart';
 
 // Activity log entry model
 class ActivityLogEntry {
@@ -68,6 +71,30 @@ class _MyBodyState extends State<Body> {
 
   // Add a variable to track the current activity of the user
   String currentActivity = "Idle"; // Default activity
+
+  // Live activities
+  final _liveActivitiesPlugin = LiveActivities();
+  String? _latestActivityId;
+  ConnectionStatusLiveActivityModel? _connectionStatusModel;
+  bool _liveActivityEnabled = false; // Track if live activity is enabled
+
+  @override
+  void initState() {
+    super.initState();
+    
+    // Initialize live activities for Android
+    if (Platform.isAndroid) {
+      _liveActivitiesPlugin.init(
+        appGroupId: 'group.nearby.connections',
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _liveActivitiesPlugin.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -166,6 +193,26 @@ class _MyBodyState extends State<Body> {
                     Permission.nearbyWifiDevices.request();
                   },
                 ),
+                ElevatedButton(
+                  child: const Text("checkNotificationPermission"),
+                  onPressed: () async {
+                    if (await Permission.notification.isGranted) {
+                      showSnackbar("Notification permissions granted :)");
+                    } else {
+                      showSnackbar("Notification permissions not granted :(");
+                    }
+                  },
+                ),
+                ElevatedButton(
+                  child: const Text("askNotificationPermission"),
+                  onPressed: () async {
+                    if (await Permission.notification.request().isGranted) {
+                      showSnackbar("Notification permissions granted :)");
+                    } else {
+                      showSnackbar("Notification permissions not granted :(");
+                    }
+                  },
+                ),
               ],
             ),
             const Divider(),
@@ -216,6 +263,7 @@ class _MyBodyState extends State<Body> {
                             endpointMap.remove(id);
                             endpointActivities.remove(id);
                           });
+                          _updateLiveActivity(); // Update live activity on disconnect
                         },
                       );
                       showSnackbar("ADVERTISING: $a");
@@ -270,6 +318,7 @@ class _MyBodyState extends State<Body> {
                                               endpointMap.remove(id);
                                               endpointActivities.remove(id);
                                             });
+                                            _updateLiveActivity(); // Update live activity on disconnect
                                             showSnackbar(
                                                 "Disconnected from: ${endpointMap[id]!.endpointName}, id $id");
                                           },
@@ -310,6 +359,30 @@ class _MyBodyState extends State<Body> {
                   endpointMap.clear();
                   endpointActivities.clear();
                 });
+                _updateLiveActivity(); // Update live activity when all endpoints stopped
+              },
+            ),
+            ElevatedButton(
+              child: Text(_liveActivityEnabled ? "Disable Live Activity" : "Enable Live Activity"),
+              onPressed: () async {
+                setState(() {
+                  _liveActivityEnabled = !_liveActivityEnabled;
+                });
+                
+                if (_liveActivityEnabled) {
+                  // Create/update live activity when enabled
+                  await _updateLiveActivity();
+                  showSnackbar("Live Activity enabled");
+                } else {
+                  // End live activity when disabled
+                  if (_latestActivityId != null) {
+                    await _liveActivitiesPlugin.endActivity(_latestActivityId!);
+                    setState(() {
+                      _latestActivityId = null;
+                    });
+                  }
+                  showSnackbar("Live Activity disabled");
+                }
               },
             ),
             const Divider(),
@@ -689,6 +762,7 @@ class _MyBodyState extends State<Body> {
                   setState(() {
                     endpointMap[id] = info;
                   });
+                  _updateLiveActivity(); // Update live activity when connection is accepted
                   Nearby().acceptConnection(
                     id,
                     onPayLoadRecieved: (endid, payload) async {
@@ -726,6 +800,7 @@ class _MyBodyState extends State<Body> {
                           setState(() {
                             endpointActivities[endid] = str;
                           });
+                          _updateLiveActivity(); // Update live activity when remote status changes
                         }
                       } else if (payload.type == PayloadType.FILE) {
                         showSnackbar("$endid: File transfer started");
@@ -810,6 +885,46 @@ class _MyBodyState extends State<Body> {
       print("Sending '$activity' to ${value.endpointName} (ID: $key)");
       Nearby().sendBytesPayload(key, Uint8List.fromList(activity.codeUnits));
     });
+
+    // Update live activity
+    _updateLiveActivity();
+  }
+
+  Future<void> _updateLiveActivity() async {
+    if (!Platform.isAndroid) return;
+    if (!_liveActivityEnabled) return; // Only update if enabled
+
+    final connectedUsers = endpointMap.entries.map((entry) {
+      final activity = endpointActivities[entry.key] ?? "Idle";
+      return ConnectedUser(
+        name: entry.value.endpointName,
+        activity: activity,
+      );
+    }).toList();
+
+    _connectionStatusModel = ConnectionStatusLiveActivityModel(
+      selfName: userName,
+      selfActivity: currentActivity,
+      connectedCount: endpointMap.length,
+      connectedUsers: connectedUsers,
+    );
+
+    if (_latestActivityId == null) {
+      // Create new live activity
+      final activityId = await _liveActivitiesPlugin.createActivity(
+        DateTime.now().millisecondsSinceEpoch.toString(),
+        _connectionStatusModel!.toMap(),
+      );
+      print("Created Live Activity: $activityId");
+      setState(() => _latestActivityId = activityId);
+    } else {
+      // Update existing live activity
+      await _liveActivitiesPlugin.updateActivity(
+        _latestActivityId!,
+        _connectionStatusModel!.toMap(),
+      );
+      print("Updated Live Activity");
+    }
   }
 }
 
