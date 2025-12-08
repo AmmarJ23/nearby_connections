@@ -10,11 +10,12 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:nearby_connections/nearby_connections.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:live_activities/live_activities.dart';
+import 'package:flutter/services.dart';
 
 // Import the Sample App Navigation file
 import 'sample_app_navigation.dart';
 import 'models/connection_status_live_activity_model.dart';
+import 'tcp_connection_simulator.dart';
 
 // Activity log entry model
 class ActivityLogEntry {
@@ -64,6 +65,11 @@ class _MyBodyState extends State<Body> {
   final Strategy strategy = Strategy.P2P_STAR;
   Map<String, ConnectionInfo> endpointMap = {};
 
+  // TCP mode toggle
+  bool _useTcpMode = false;
+  final TcpConnectionSimulator _tcpSimulator = TcpConnectionSimulator();
+  final TextEditingController _serverAddressController = TextEditingController(text: '10.0.2.2'); // Default for emulator to host
+
   String? tempFileUri; //reference to the file currently being transferred
   Map<int, String> map = {}; //store filename mapped to corresponding payloadId
   Map<String, String> endpointActivities = {}; //store activity status for each endpoint
@@ -72,27 +78,17 @@ class _MyBodyState extends State<Body> {
   // Add a variable to track the current activity of the user
   String currentActivity = "Idle"; // Default activity
 
-  // Live activities
-  final _liveActivitiesPlugin = LiveActivities();
-  String? _latestActivityId;
-  ConnectionStatusLiveActivityModel? _connectionStatusModel;
-  bool _liveActivityEnabled = false; // Track if live activity is enabled
+  // Notification Channel
+  static const platform = MethodChannel('com.pkmnapps.nearby_connections/notification');
+  bool _liveActivityEnabled = true; // Track if live activity is enabled (default: true)
 
   @override
   void initState() {
     super.initState();
-    
-    // Initialize live activities for Android
-    if (Platform.isAndroid) {
-      _liveActivitiesPlugin.init(
-        appGroupId: 'group.nearby.connections',
-      );
-    }
   }
 
   @override
   void dispose() {
-    _liveActivitiesPlugin.dispose();
     super.dispose();
   }
 
@@ -103,6 +99,34 @@ class _MyBodyState extends State<Body> {
         padding: const EdgeInsets.all(8.0),
         child: ListView(
           children: <Widget>[
+            // Add TCP Mode Toggle at the top
+            Card(
+              color: _useTcpMode ? Colors.blue.shade50 : Colors.grey.shade50,
+              child: SwitchListTile(
+                title: const Text('TCP Testing Mode'),
+                subtitle: Text(_useTcpMode 
+                  ? 'Using TCP sockets for testing' 
+                  : 'Using Nearby Connections'),
+                value: _useTcpMode,
+                onChanged: (value) {
+                  setState(() {
+                    _useTcpMode = value;
+                  });
+                },
+              ),
+            ),
+            if (_useTcpMode)
+              Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: TextField(
+                  controller: _serverAddressController,
+                  decoration: const InputDecoration(
+                    labelText: 'Server IP Address',
+                    hintText: '10.0.2.2 (emulator) or device IP',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ),
             const Text(
               "Permissions",
             ),
@@ -249,23 +273,44 @@ class _MyBodyState extends State<Body> {
                   child: const Text("Start Advertising"),
                   onPressed: () async {
                     try {
-                      bool a = await Nearby().startAdvertising(
-                        userName,
-                        strategy,
-                        onConnectionInitiated: onConnectionInit,
-                        onConnectionResult: (id, status) {
-                          showSnackbar(status);
-                        },
-                        onDisconnected: (id) {
-                          showSnackbar(
-                              "Disconnected: ${endpointMap[id]!.endpointName}, id $id");
-                          setState(() {
-                            endpointMap.remove(id);
-                            endpointActivities.remove(id);
-                          });
-                          _updateLiveActivity(); // Update live activity on disconnect
-                        },
-                      );
+                      bool a;
+                      if (_useTcpMode) {
+                        a = await _tcpSimulator.startAdvertising(
+                          userName: userName,
+                          onConnectionInit: (id, name, token) {
+                            onConnectionInit(id, name);
+                          },
+                          onConnectionResult: (id) {
+                            showSnackbar("TCP Connection: $id");
+                          },
+                          onDisconnected: (id) {
+                            showSnackbar("TCP Disconnected: $id");
+                            setState(() {
+                              endpointMap.remove(id);
+                              endpointActivities.remove(id);
+                            });
+                            _updateLiveActivity();
+                          },
+                        );
+                      } else {
+                        a = await Nearby().startAdvertising(
+                          userName,
+                          strategy,
+                          onConnectionInitiated: onConnectionInit,
+                          onConnectionResult: (id, status) {
+                            showSnackbar(status);
+                          },
+                          onDisconnected: (id) {
+                            showSnackbar(
+                                "Disconnected: ${endpointMap[id]!.endpointName}, id $id");
+                            setState(() {
+                              endpointMap.remove(id);
+                              endpointActivities.remove(id);
+                            });
+                            _updateLiveActivity(); // Update live activity on disconnect
+                          },
+                        );
+                      }
                       showSnackbar("ADVERTISING: $a");
                     } catch (exception) {
                       showSnackbar(exception);
@@ -275,7 +320,11 @@ class _MyBodyState extends State<Body> {
                 ElevatedButton(
                   child: const Text("Stop Advertising"),
                   onPressed: () async {
-                    await Nearby().stopAdvertising();
+                    if (_useTcpMode) {
+                      await _tcpSimulator.stopAdvertising();
+                    } else {
+                      await Nearby().stopAdvertising();
+                    }
                   },
                 ),
               ],
@@ -286,10 +335,60 @@ class _MyBodyState extends State<Body> {
                   child: const Text("Start Discovery"),
                   onPressed: () async {
                     try {
-                      bool a = await Nearby().startDiscovery(
-                        userName,
-                        strategy,
-                        onEndpointFound: (id, name, serviceId) {
+                      bool a;
+                      if (_useTcpMode) {
+                        a = await _tcpSimulator.startDiscovery(
+                          userName: userName,
+                          onEndpointFound: (id, name, serviceId) {
+                            showModalBottomSheet(
+                              context: context,
+                              builder: (builder) {
+                                return Center(
+                                  child: Column(
+                                    children: <Widget>[
+                                      Text("id: $id"),
+                                      Text("Name: $name"),
+                                      const SizedBox(height: 16),
+                                      ElevatedButton(
+                                        child: const Text("Request Connection"),
+                                        onPressed: () {
+                                          Navigator.pop(context);
+                                          _tcpSimulator.requestConnection(
+                                            userName: userName,
+                                            endpointId: id,
+                                            serverAddress: _serverAddressController.text,
+                                            onConnectionInit: (id, name, token) {
+                                              onConnectionInit(id, name);
+                                            },
+                                            onConnectionResult: (id) {
+                                              showSnackbar("TCP Connected: $id");
+                                            },
+                                            onDisconnected: (id) {
+                                              setState(() {
+                                                endpointMap.remove(id);
+                                                endpointActivities.remove(id);
+                                              });
+                                              _updateLiveActivity();
+                                              showSnackbar("TCP Disconnected: $id");
+                                            },
+                                          );
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            );
+                          },
+                          onEndpointLost: (id) {
+                            showSnackbar("Lost endpoint: $id");
+                          },
+                        );
+                      } else {
+                        a = await Nearby().startDiscovery(
+                          userName,
+                          strategy,
+                          onEndpointFound: (id, name, serviceId) {
                           // show sheet automatically to request connection
                           showModalBottomSheet(
                             context: context,
@@ -335,7 +434,8 @@ class _MyBodyState extends State<Body> {
                           showSnackbar(
                               "Lost discovered Endpoint: ${endpointMap[id]?.endpointName}, id $id");
                         },
-                      );
+                        );
+                      }
                       showSnackbar("DISCOVERING: $a");
                     } catch (e) {
                       showSnackbar(e);
@@ -345,16 +445,74 @@ class _MyBodyState extends State<Body> {
                 ElevatedButton(
                   child: const Text("Stop Discovery"),
                   onPressed: () async {
-                    await Nearby().stopDiscovery();
+                    if (_useTcpMode) {
+                      await _tcpSimulator.stopDiscovery();
+                    } else {
+                      await Nearby().stopDiscovery();
+                    }
                   },
                 ),
               ],
             ),
             Text("Number of connected devices: ${endpointMap.length}"),
             ElevatedButton(
+              child: const Text("Print Live Activity Status"),
+              onPressed: () {
+                print("\n========== LIVE ACTIVITY STATUS ==========");
+                print("Enabled: $_liveActivityEnabled");
+                print("Platform: ${Platform.operatingSystem}");
+                print("User Name: $userName");
+                print("Current Activity: $currentActivity");
+                print("Connected Devices: ${endpointMap.length}");
+                print("\nConnected Users:");
+                if (endpointMap.isEmpty) {
+                  print("  (None)");
+                } else {
+                  endpointMap.forEach((key, value) {
+                    final activity = endpointActivities[key] ?? "Idle";
+                    print("  - ${value.endpointName} ($key): $activity");
+                  });
+                }
+                
+                // Show what data would be sent
+                final connectedUsers = endpointMap.entries.map((entry) {
+                  final activity = endpointActivities[entry.key] ?? "Idle";
+                  return ConnectedUser(
+                    name: entry.value.endpointName,
+                    activity: activity,
+                  );
+                }).toList();
+                final model = ConnectionStatusLiveActivityModel(
+                  selfName: userName,
+                  selfActivity: currentActivity,
+                  connectedCount: endpointMap.length,
+                  connectedUsers: connectedUsers,
+                );
+                print("\nData that would be sent:");
+                print(model.toMap());
+                print("==========================================\n");
+                showSnackbar("Live Activity status printed to console");
+              },
+            ),
+            ElevatedButton(
+              child: const Text("Force Refresh Live Activity"),
+              onPressed: () async {
+                if (_liveActivityEnabled) {
+                  await _updateLiveActivity(forceRecreate: true);
+                  showSnackbar("Live Activity force refreshed");
+                } else {
+                  showSnackbar("Enable Live Activity first");
+                }
+              },
+            ),
+            ElevatedButton(
               child: const Text("Stop All Endpoints"),
               onPressed: () async {
-                await Nearby().stopAllEndpoints();
+                if (_useTcpMode) {
+                  await _tcpSimulator.stopAllEndpoints();
+                } else {
+                  await Nearby().stopAllEndpoints();
+                }
                 setState(() {
                   endpointMap.clear();
                   endpointActivities.clear();
@@ -365,23 +523,26 @@ class _MyBodyState extends State<Body> {
             ElevatedButton(
               child: Text(_liveActivityEnabled ? "Disable Live Activity" : "Enable Live Activity"),
               onPressed: () async {
-                setState(() {
-                  _liveActivityEnabled = !_liveActivityEnabled;
-                });
-                
                 if (_liveActivityEnabled) {
-                  // Create/update live activity when enabled
-                  await _updateLiveActivity();
-                  showSnackbar("Live Activity enabled");
-                } else {
-                  // End live activity when disabled
-                  if (_latestActivityId != null) {
-                    await _liveActivitiesPlugin.endActivity(_latestActivityId!);
-                    setState(() {
-                      _latestActivityId = null;
-                    });
+                  // Disabling
+                  print("🛑 Disabling Live Activity");
+                  try {
+                    await platform.invokeMethod('stopNotification');
+                  } catch (e) {
+                    print("⚠️ Error stopping notification: $e");
                   }
+                  setState(() {
+                    _liveActivityEnabled = false;
+                  });
                   showSnackbar("Live Activity disabled");
+                } else {
+                  // Enabling
+                  print("▶️ Enabling Live Activity");
+                  setState(() {
+                    _liveActivityEnabled = true;
+                  });
+                  await _updateLiveActivity(forceRecreate: true);
+                  showSnackbar("Live Activity enabled");
                 }
               },
             ),
@@ -744,7 +905,19 @@ class _MyBodyState extends State<Body> {
 
   /// Called upon Connection request (on both devices)
   /// Both need to accept connection to start sending/receiving
-  void onConnectionInit(String id, ConnectionInfo info) {
+  void onConnectionInit(String id, dynamic info) {
+    ConnectionInfo connectionInfo;
+    
+    if (info is ConnectionInfo) {
+      connectionInfo = info;
+    } else {
+      // Create ConnectionInfo for TCP mode
+      connectionInfo = ConnectionInfo(
+        id,
+        info is String ? info : 'TCP-User',
+        true, // isIncomingConnection
+      );
+    }
     showModalBottomSheet(
       context: context,
       builder: (builder) {
@@ -752,18 +925,40 @@ class _MyBodyState extends State<Body> {
           child: Column(
             children: <Widget>[
               Text("id: $id"),
-              Text("Token: ${info.authenticationToken}"),
-              Text("Name${info.endpointName}"),
-              Text("Incoming: ${info.isIncomingConnection}"),
+              Text("Token: ${connectionInfo.authenticationToken}"),
+              Text("Name: ${connectionInfo.endpointName}"),
+              Text("Incoming: ${connectionInfo.isIncomingConnection}"),
               ElevatedButton(
                 child: const Text("Accept Connection"),
                 onPressed: () {
                   Navigator.pop(context);
                   setState(() {
-                    endpointMap[id] = info;
+                    endpointMap[id] = connectionInfo;
                   });
                   _updateLiveActivity(); // Update live activity when connection is accepted
-                  Nearby().acceptConnection(
+                  
+                  if (_useTcpMode) {
+                    _tcpSimulator.acceptConnection(id);
+                    _tcpSimulator.onPayloadReceived = (endid, payload) {
+                      if (payload['type'] == 'BYTES') {
+                        Uint8List bytes = payload['bytes'];
+                        String str = String.fromCharCodes(bytes);
+                        
+                        if (!str.contains(':')) {
+                          String endpointName = endpointMap[endid]?.endpointName ?? endid;
+                          String? previousActivity = endpointActivities[endid];
+                          if (previousActivity != str) {
+                            _logActivity(endpointName, str);
+                          }
+                          setState(() {
+                            endpointActivities[endid] = str;
+                          });
+                          _updateLiveActivity();
+                        }
+                      }
+                    };
+                  } else {
+                    Nearby().acceptConnection(
                     id,
                     onPayLoadRecieved: (endid, payload) async {
                       if (payload.type == PayloadType.BYTES) {
@@ -831,6 +1026,7 @@ class _MyBodyState extends State<Body> {
                       }
                     },
                   );
+                  }
                 },
               ),
               ElevatedButton(
@@ -838,7 +1034,12 @@ class _MyBodyState extends State<Body> {
                 onPressed: () async {
                   Navigator.pop(context);
                   try {
-                    await Nearby().rejectConnection(id);
+                    if (_useTcpMode) {
+                      // For TCP mode, just don't accept
+                      showSnackbar("Connection rejected");
+                    } else {
+                      await Nearby().rejectConnection(id);
+                    }
                   } catch (e) {
                     showSnackbar(e);
                   }
@@ -883,47 +1084,58 @@ class _MyBodyState extends State<Body> {
     // Send the activity update to all connected devices
     endpointMap.forEach((key, value) {
       print("Sending '$activity' to ${value.endpointName} (ID: $key)");
-      Nearby().sendBytesPayload(key, Uint8List.fromList(activity.codeUnits));
+      if (_useTcpMode) {
+        _tcpSimulator.sendBytesPayload(key, Uint8List.fromList(activity.codeUnits));
+      } else {
+        Nearby().sendBytesPayload(key, Uint8List.fromList(activity.codeUnits));
+      }
     });
 
     // Update live activity
     _updateLiveActivity();
   }
 
-  Future<void> _updateLiveActivity() async {
-    if (!Platform.isAndroid) return;
-    if (!_liveActivityEnabled) return; // Only update if enabled
+  Future<void> _updateLiveActivity({bool forceRecreate = false}) async {
+    if (!Platform.isAndroid) {
+      print("⏭️ Skipping live activity - Platform: ${Platform.operatingSystem}");
+      return;
+    }
+    
+    if (!_liveActivityEnabled) {
+      print("⏭️ Live activity disabled by user");
+      return;
+    }
 
+    print("\n📱 ===== UPDATING NOTIFICATION =====");
+    print("Self: $userName - $currentActivity");
+    print("Connected: ${endpointMap.length}");
+    
+    // Build connected users list
     final connectedUsers = endpointMap.entries.map((entry) {
       final activity = endpointActivities[entry.key] ?? "Idle";
+      print("  👤 ${entry.value.endpointName}: $activity");
       return ConnectedUser(
         name: entry.value.endpointName,
         activity: activity,
       );
     }).toList();
 
-    _connectionStatusModel = ConnectionStatusLiveActivityModel(
+    // Create the model
+    final model = ConnectionStatusLiveActivityModel(
       selfName: userName,
       selfActivity: currentActivity,
       connectedCount: endpointMap.length,
       connectedUsers: connectedUsers,
     );
 
-    if (_latestActivityId == null) {
-      // Create new live activity
-      final activityId = await _liveActivitiesPlugin.createActivity(
-        DateTime.now().millisecondsSinceEpoch.toString(),
-        _connectionStatusModel!.toMap(),
-      );
-      print("Created Live Activity: $activityId");
-      setState(() => _latestActivityId = activityId);
-    } else {
-      // Update existing live activity
-      await _liveActivitiesPlugin.updateActivity(
-        _latestActivityId!,
-        _connectionStatusModel!.toMap(),
-      );
-      print("Updated Live Activity");
+    final data = model.toMap();
+    print("📦 Data to send: $data");
+
+    try {
+      await platform.invokeMethod('updateNotification', data);
+      print("✅ Updated Notification");
+    } catch (e) {
+      print("❌ ERROR in _updateLiveActivity: $e");
     }
   }
 }
