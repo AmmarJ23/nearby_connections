@@ -1,5 +1,7 @@
 // ignore_for_file: avoid_print, prefer_const_constructors
 
+import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -9,9 +11,11 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:nearby_connections/nearby_connections.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:live_activities/live_activities.dart';
 
 // Import the Sample App Navigation file
 import 'sample_app_navigation.dart';
+import 'models/connection_status_model.dart';
 
 // Activity log entry model
 class ActivityLogEntry {
@@ -68,6 +72,139 @@ class _MyBodyState extends State<Body> {
 
   // Add a variable to track the current activity of the user
   String currentActivity = "Idle"; // Default activity
+  
+  // Live Activity tracking
+  final _liveActivitiesPlugin = LiveActivities();
+  String? _liveActivityId;
+  ConnectionStatusModel? _connectionStatusModel;
+  StreamSubscription? _activityUpdateSubscription;
+  
+  @override
+  void initState() {
+    super.initState();
+    _initializeLiveActivities();
+  }
+  
+  @override
+  void dispose() {
+    _activityUpdateSubscription?.cancel();
+    _endLiveActivity();
+    _liveActivitiesPlugin.dispose();
+    super.dispose();
+  }
+  
+  // Initialize LiveActivities plugin
+  Future<void> _initializeLiveActivities() async {
+    if (Platform.isIOS) {
+      await _liveActivitiesPlugin.init(
+        appGroupId: 'group.nearbyconnections.example',
+        urlScheme: 'nearbyconnections',
+      );
+      
+      // Listen to activity updates
+      _activityUpdateSubscription = _liveActivitiesPlugin.activityUpdateStream.listen((event) {
+        debugPrint('Live Activity update: $event');
+      });
+    }
+    
+    // Create initial live activity
+    await _createLiveActivity();
+  }
+  
+  // Create a new live activity
+  Future<void> _createLiveActivity() async {
+    if (!Platform.isIOS) return;
+    
+    try {
+      await Permission.notification.request();
+      
+      _connectionStatusModel = ConnectionStatusModel(
+        currentUserName: userName,
+        currentStatus: currentActivity,
+        connectedUsers: [],
+        lastUpdateTime: DateTime.now(),
+        totalConnections: 0,
+      );
+      
+      final activityId = await _liveActivitiesPlugin.createActivity(
+        DateTime.now().millisecondsSinceEpoch.toString(),
+        _connectionStatusModel!.toMap(),
+      );
+      
+      setState(() {
+        _liveActivityId = activityId;
+      });
+      
+      debugPrint('Live Activity created: $_liveActivityId');
+    } catch (e) {
+      debugPrint('Error creating live activity: $e');
+    }
+  }
+  
+  // Update the live activity with current connection status
+  Future<void> _updateLiveActivity() async {
+    if (!Platform.isIOS || _liveActivityId == null || _connectionStatusModel == null) {
+      return;
+    }
+    
+    try {
+      // Build list of connected users
+      final connectedUsers = endpointMap.entries.map((entry) {
+        return ConnectedUser(
+          id: entry.key,
+          name: entry.value.endpointName,
+          status: endpointActivities[entry.key] ?? 'Connected',
+          connectedTime: DateTime.now(),
+        );
+      }).toList();
+      
+      _connectionStatusModel = _connectionStatusModel!.copyWith(
+        currentStatus: currentActivity,
+        connectedUsers: connectedUsers,
+        lastUpdateTime: DateTime.now(),
+        totalConnections: connectedUsers.length,
+      );
+      
+      await _liveActivitiesPlugin.updateActivity(
+        _liveActivityId!,
+        _connectionStatusModel!.toMap(),
+      );
+      
+      debugPrint('Live Activity updated: ${connectedUsers.length} users connected');
+    } catch (e) {
+      debugPrint('Error updating live activity: $e');
+    }
+  }
+  
+  // End live activity
+  Future<void> _endLiveActivity() async {
+    if (!Platform.isIOS || _liveActivityId == null) return;
+    
+    try {
+      await _liveActivitiesPlugin.endActivity(_liveActivityId!);
+      debugPrint('Live Activity ended');
+      _liveActivityId = null;
+    } catch (e) {
+      debugPrint('Error ending live activity: $e');
+    }
+  }
+  
+  // Helper method to update activity and sync with live activity
+  Future<void> _updateActivityStatus(String newActivity, {String? additionalInfo}) async {
+    setState(() {
+      currentActivity = newActivity;
+    });
+    
+    // Add to activity log
+    activityLog.insert(0, ActivityLogEntry(
+      userName: userName,
+      activity: additionalInfo ?? newActivity,
+      timestamp: DateTime.now(),
+    ));
+    
+    // Update live activity
+    await _updateLiveActivity();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -76,6 +213,146 @@ class _MyBodyState extends State<Body> {
         padding: const EdgeInsets.all(8.0),
         child: ListView(
           children: <Widget>[
+            // Activity Tracking Section
+            Card(
+              color: Colors.blue.shade50,
+              elevation: 4,
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.person, color: Colors.blue),
+                        SizedBox(width: 8),
+                        Text(
+                          'Nearby Connections - Live Activity',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.blue.shade900,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Divider(),
+                    Text(
+                      'User: $userName',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Status: $currentActivity',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.green.shade700,
+                      ),
+                    ),
+                    SizedBox(height: 8),
+                    Text(
+                      _liveActivityId != null 
+                          ? '✓ Live Activity Running (iOS)' 
+                          : Platform.isIOS 
+                              ? '✗ No Active Tracking'
+                              : 'ℹ Live Activities only on iOS',
+                      style: TextStyle(
+                        color: _liveActivityId != null 
+                            ? Colors.green 
+                            : Colors.orange,
+                        fontSize: 12,
+                      ),
+                    ),
+                    if (Platform.isIOS) ...[
+                      SizedBox(height: 4),
+                      Text(
+                        'Grant notification permission to see live activity widget',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey.shade600,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ],
+                    SizedBox(height: 12),
+                    if (endpointMap.isNotEmpty) ...[
+                      Text(
+                        'Connected Users (${endpointMap.length}):',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      SizedBox(height: 8),
+                      ...endpointMap.entries.map((entry) => Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Row(
+                          children: [
+                            Icon(Icons.person_outline, size: 16, color: Colors.green),
+                            SizedBox(width: 8),
+                            Text(
+                              entry.value.endpointName,
+                              style: TextStyle(fontSize: 13),
+                            ),
+                            SizedBox(width: 8),
+                            Text(
+                              '(${endpointActivities[entry.key] ?? "Connected"})',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.grey.shade600,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )).toList(),
+                    ] else ...[
+                      Text(
+                        'No connected users',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            SizedBox(height: 8),
+            // Recent Activity Log
+            if (activityLog.isNotEmpty)
+              Card(
+                child: ExpansionTile(
+                  title: Text('Recent Activities (${activityLog.length})'),
+                  leading: Icon(Icons.history),
+                  children: [
+                    Container(
+                      height: 150,
+                      child: ListView.builder(
+                        itemCount: activityLog.take(10).length,
+                        itemBuilder: (context, index) {
+                          final log = activityLog[index];
+                          return ListTile(
+                            dense: true,
+                            leading: Icon(Icons.circle, size: 8, color: Colors.blue),
+                            title: Text(log.activity),
+                            trailing: Text(
+                              _formatTime(log.timestamp),
+                              style: TextStyle(fontSize: 12, color: Colors.grey),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            const Divider(),
             const Text(
               "Permissions",
             ),
@@ -166,6 +443,30 @@ class _MyBodyState extends State<Body> {
                     Permission.nearbyWifiDevices.request();
                   },
                 ),
+                ElevatedButton(
+                  child: const Text("checkNotificationPermission (>= Android 13)"),
+                  onPressed: () async {
+                    if (await Permission.notification.isGranted) {
+                      showSnackbar("Notification permissions granted :)");
+                    } else {
+                      showSnackbar("Notification permissions not granted :(");
+                    }
+                  },
+                ),
+                ElevatedButton(
+                  child: const Text("askNotificationPermission (Android 13+)"),
+                  onPressed: () async {
+                    final status = await Permission.notification.request();
+                    if (status.isGranted) {
+                      showSnackbar("Notification permissions granted :)");
+                      // Recreate live activity to show notification
+                      await _endLiveActivity();
+                      await _createLiveActivity();
+                    } else {
+                      showSnackbar("Notification permissions denied :(");
+                    }
+                  },
+                ),
               ],
             ),
             const Divider(),
@@ -202,12 +503,16 @@ class _MyBodyState extends State<Body> {
                   child: const Text("Start Advertising"),
                   onPressed: () async {
                     try {
+                      await _updateActivityStatus('Advertising', additionalInfo: 'Waiting for connections');
                       bool a = await Nearby().startAdvertising(
                         userName,
                         strategy,
                         onConnectionInitiated: onConnectionInit,
                         onConnectionResult: (id, status) {
                           showSnackbar(status);
+                          if (status == Status.CONNECTED) {
+                            _updateActivityStatus('Connected', additionalInfo: 'Connected to ${endpointMap[id]?.endpointName}');
+                          }
                         },
                         onDisconnected: (id) {
                           showSnackbar(
@@ -216,6 +521,10 @@ class _MyBodyState extends State<Body> {
                             endpointMap.remove(id);
                             endpointActivities.remove(id);
                           });
+                          _updateLiveActivity();
+                          if (endpointMap.isEmpty) {
+                            _updateActivityStatus('Idle', additionalInfo: 'No connections');
+                          }
                         },
                       );
                       showSnackbar("ADVERTISING: $a");
@@ -228,6 +537,7 @@ class _MyBodyState extends State<Body> {
                   child: const Text("Stop Advertising"),
                   onPressed: () async {
                     await Nearby().stopAdvertising();
+                    await _updateActivityStatus('Idle', additionalInfo: 'Stopped advertising');
                   },
                 ),
               ],
@@ -238,6 +548,7 @@ class _MyBodyState extends State<Body> {
                   child: const Text("Start Discovery"),
                   onPressed: () async {
                     try {
+                      await _updateActivityStatus('Discovering', additionalInfo: 'Searching for nearby devices');
                       bool a = await Nearby().startDiscovery(
                         userName,
                         strategy,
@@ -297,6 +608,7 @@ class _MyBodyState extends State<Body> {
                   child: const Text("Stop Discovery"),
                   onPressed: () async {
                     await Nearby().stopDiscovery();
+                    await _updateActivityStatus('Idle', additionalInfo: 'Stopped discovery');
                   },
                 ),
               ],
@@ -659,6 +971,57 @@ class _MyBodyState extends State<Body> {
       ),
     );
   }
+  
+  // Helper method to build activity buttons
+  // Note: This method is currently not used but kept for reference
+  // Widget _buildActivityButton(String activity, IconData icon, Color color) {
+  //   final isCurrentActivity = currentActivity == activity;
+  //   return ElevatedButton.icon(
+  //     onPressed: () async {
+  //       await _updateActivityStatus(activity);
+  //       showSnackbar('Activity set to: $activity');
+  //     },
+  //     icon: Icon(icon, size: 18),
+  //     label: Text(activity),
+  //     style: ElevatedButton.styleFrom(
+  //       backgroundColor: isCurrentActivity ? color : Colors.grey.shade300,
+  //       foregroundColor: isCurrentActivity ? Colors.white : Colors.black87,
+  //       padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+  //     ),
+  //   );
+  // }
+  
+  // Helper method to format timestamp
+  String _formatTime(DateTime timestamp) {
+    final now = DateTime.now();
+    final difference = now.difference(timestamp);
+    
+    if (difference.inSeconds < 60) {
+      return '${difference.inSeconds}s ago';
+    } else if (difference.inMinutes < 60) {
+      return '${difference.inMinutes}m ago';
+    } else if (difference.inHours < 24) {
+      return '${difference.inHours}h ago';
+    } else {
+      return '${timestamp.hour}:${timestamp.minute.toString().padLeft(2, '0')}';
+    }
+  }
+  
+  // Helper method to log activity
+  void _logActivity(String user, String activity) {
+    setState(() {
+      activityLog.insert(0, ActivityLogEntry(
+        userName: user,
+        activity: activity,
+        timestamp: DateTime.now(),
+      ));
+      
+      // Keep only the last 100 entries
+      if (activityLog.length > 100) {
+        activityLog = activityLog.sublist(0, 100);
+      }
+    });
+  }
 
   Future<bool> moveFile(String uri, String fileName) async {
     String parentDir = (await getExternalStorageDirectory())!.absolute.path;
@@ -689,6 +1052,8 @@ class _MyBodyState extends State<Body> {
                   setState(() {
                     endpointMap[id] = info;
                   });
+                  // Update live activity when connection is accepted
+                  _updateLiveActivity();
                   Nearby().acceptConnection(
                     id,
                     onPayLoadRecieved: (endid, payload) async {
@@ -726,6 +1091,9 @@ class _MyBodyState extends State<Body> {
                           setState(() {
                             endpointActivities[endid] = str;
                           });
+                          
+                          // Update live activity with new endpoint status
+                          _updateLiveActivity();
                         }
                       } else if (payload.type == PayloadType.FILE) {
                         showSnackbar("$endid: File transfer started");
@@ -774,21 +1142,6 @@ class _MyBodyState extends State<Body> {
         );
       },
     );
-  }
-
-  // Function to log activity with timestamp
-  void _logActivity(String userName, String activity) {
-    final logEntry = ActivityLogEntry(
-      userName: userName,
-      activity: activity,
-      timestamp: DateTime.now(),
-    );
-    
-    setState(() {
-      activityLog.add(logEntry);
-    });
-    
-    print("Auto-logged: $userName - $activity");
   }
 
   // Function to update the user's activity and notify connected devices
