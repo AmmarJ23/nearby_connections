@@ -1,3 +1,5 @@
+// ignore_for_file: avoid_print, constant_identifier_names
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
