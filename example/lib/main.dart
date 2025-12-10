@@ -80,7 +80,9 @@ class _MyBodyState extends State<Body> {
 
   // Notification Channel
   static const platform = MethodChannel('com.pkmnapps.nearby_connections/notification');
+  static const overlayPlatform = MethodChannel('com.pkmnapps.nearby_connections/overlay');
   bool _liveActivityEnabled = true; // Track if live activity is enabled (default: true)
+  bool _overlayEnabled = false; // Track if overlay is enabled (default: false)
 
   @override
   void initState() {
@@ -290,6 +292,7 @@ class _MyBodyState extends State<Body> {
                               endpointActivities.remove(id);
                             });
                             _updateLiveActivity();
+                            _updateOverlay();
                           },
                         );
                       } else {
@@ -308,6 +311,7 @@ class _MyBodyState extends State<Body> {
                               endpointActivities.remove(id);
                             });
                             _updateLiveActivity(); // Update live activity on disconnect
+                            _updateOverlay(); // Update overlay on disconnect
                           },
                         );
                       }
@@ -369,6 +373,7 @@ class _MyBodyState extends State<Body> {
                                                 endpointActivities.remove(id);
                                               });
                                               _updateLiveActivity();
+                                              _updateOverlay();
                                               showSnackbar("TCP Disconnected: $id");
                                             },
                                           );
@@ -418,6 +423,7 @@ class _MyBodyState extends State<Body> {
                                               endpointActivities.remove(id);
                                             });
                                             _updateLiveActivity(); // Update live activity on disconnect
+                                            _updateOverlay(); // Update overlay on disconnect
                                             showSnackbar(
                                                 "Disconnected from: ${endpointMap[id]!.endpointName}, id $id");
                                           },
@@ -518,6 +524,8 @@ class _MyBodyState extends State<Body> {
                   endpointActivities.clear();
                 });
                 _updateLiveActivity(); // Update live activity when all endpoints stopped
+                _updateOverlay(); // Update overlay when all endpoints stopped
+                _updateOverlay(); // Update overlay when all endpoints stopped
               },
             ),
             ElevatedButton(
@@ -543,6 +551,54 @@ class _MyBodyState extends State<Body> {
                   });
                   await _updateLiveActivity(forceRecreate: true);
                   showSnackbar("Live Activity enabled");
+                }
+              },
+            ),
+            ElevatedButton(
+              child: Text(_overlayEnabled ? "Disable Screen Overlay" : "Enable Screen Overlay"),
+              onPressed: () async {
+                if (_overlayEnabled) {
+                  // Disabling overlay
+                  print("🛑 Disabling Screen Overlay");
+                  try {
+                    await overlayPlatform.invokeMethod('hideOverlay');
+                  } catch (e) {
+                    print("❌ Error hiding overlay: $e");
+                  }
+                  setState(() {
+                    _overlayEnabled = false;
+                  });
+                  showSnackbar("Screen Overlay disabled");
+                } else {
+                  // Enabling overlay
+                  print("▶️ Enabling Screen Overlay");
+                  
+                  // Check and request permission first
+                  bool hasPermission = false;
+                  try {
+                    hasPermission = await overlayPlatform.invokeMethod('checkOverlayPermission');
+                  } catch (e) {
+                    print("❌ Error checking overlay permission: $e");
+                  }
+                  
+                  if (!hasPermission) {
+                    print("⚠️ Requesting overlay permission");
+                    try {
+                      await overlayPlatform.invokeMethod('requestOverlayPermission');
+                      showSnackbar("Please grant overlay permission in settings");
+                      return;
+                    } catch (e) {
+                      print("❌ Error requesting overlay permission: $e");
+                      showSnackbar("Failed to request overlay permission");
+                      return;
+                    }
+                  }
+                  
+                  setState(() {
+                    _overlayEnabled = true;
+                  });
+                  await _updateOverlay(isInitialShow: true);
+                  showSnackbar("Screen Overlay enabled");
                 }
               },
             ),
@@ -936,6 +992,7 @@ class _MyBodyState extends State<Body> {
                     endpointMap[id] = connectionInfo;
                   });
                   _updateLiveActivity(); // Update live activity when connection is accepted
+                  _updateOverlay(); // Update overlay when connection is accepted
                   
                   if (_useTcpMode) {
                     _tcpSimulator.acceptConnection(id);
@@ -954,6 +1011,7 @@ class _MyBodyState extends State<Body> {
                             endpointActivities[endid] = str;
                           });
                           _updateLiveActivity();
+                          _updateOverlay();
                         }
                       }
                     };
@@ -996,6 +1054,7 @@ class _MyBodyState extends State<Body> {
                             endpointActivities[endid] = str;
                           });
                           _updateLiveActivity(); // Update live activity when remote status changes
+                          _updateOverlay(); // Update overlay when remote status changes
                         }
                       } else if (payload.type == PayloadType.FILE) {
                         showSnackbar("$endid: File transfer started");
@@ -1093,6 +1152,8 @@ class _MyBodyState extends State<Body> {
 
     // Update live activity
     _updateLiveActivity();
+    // Update overlay if enabled
+    _updateOverlay();
   }
 
   Future<void> _updateLiveActivity({bool forceRecreate = false}) async {
@@ -1136,6 +1197,52 @@ class _MyBodyState extends State<Body> {
       print("✅ Updated Notification");
     } catch (e) {
       print("❌ ERROR in _updateLiveActivity: $e");
+    }
+  }
+
+  Future<void> _updateOverlay({bool isInitialShow = false}) async {
+    if (!Platform.isAndroid) {
+      print("⏭️ Skipping overlay - Platform: ${Platform.operatingSystem}");
+      return;
+    }
+    
+    if (!_overlayEnabled) {
+      print("⏭️ Overlay disabled by user");
+      return;
+    }
+
+    print("\n🔲 ===== UPDATING OVERLAY =====");
+    print("Self: $userName - $currentActivity");
+    print("Connected: ${endpointMap.length}");
+    
+    // Build connected users list
+    final connectedUsers = endpointMap.entries.map((entry) {
+      final activity = endpointActivities[entry.key] ?? "Idle";
+      print("  👤 ${entry.value.endpointName}: $activity");
+      return ConnectedUser(
+        name: entry.value.endpointName,
+        activity: activity,
+      );
+    }).toList();
+
+    // Create the model
+    final model = ConnectionStatusLiveActivityModel(
+      selfName: userName,
+      selfActivity: currentActivity,
+      connectedCount: endpointMap.length,
+      connectedUsers: connectedUsers,
+    );
+
+    final data = model.toMap();
+    print("📦 Data to send: $data");
+
+    try {
+      // Use 'showOverlay' for initial display, 'updateOverlay' for subsequent updates
+      final method = isInitialShow ? 'showOverlay' : 'updateOverlay';
+      await overlayPlatform.invokeMethod(method, data);
+      print("✅ ${isInitialShow ? 'Showed' : 'Updated'} Overlay");
+    } catch (e) {
+      print("❌ ERROR in _updateOverlay: $e");
     }
   }
 }
