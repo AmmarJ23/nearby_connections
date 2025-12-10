@@ -27,6 +27,13 @@ class MainActivity : FlutterActivity() {
         private const val TAG = "MainActivity"
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        // Always hide overlay when app is destroyed
+        Log.d(TAG, "onDestroy - hiding overlay")
+        hideOverlay()
+    }
+
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         

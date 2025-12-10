@@ -91,6 +91,12 @@ class _MyBodyState extends State<Body> {
 
   @override
   void dispose() {
+    // Disable overlay when app is closed
+    if (_overlayEnabled) {
+      overlayPlatform.invokeMethod('hideOverlay').catchError((e) {
+        print("Error hiding overlay on dispose: $e");
+      });
+    }
     super.dispose();
   }
 
