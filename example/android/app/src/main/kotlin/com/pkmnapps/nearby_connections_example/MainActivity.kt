@@ -231,10 +231,14 @@ class MainActivity : FlutterActivity() {
         bundle.putString(OverlayService.EXTRA_SELF_ACTIVITY, selfActivity)
         bundle.putInt(OverlayService.EXTRA_CONNECTED_COUNT, connectedCount)
         
-        if (users.isNotEmpty()) {
-            bundle.putString(OverlayService.EXTRA_FIRST_USER_NAME, users[0]["name"])
-            bundle.putString(OverlayService.EXTRA_FIRST_USER_ACTIVITY, users[0]["activity"])
-        }
+        // Extract up to 3 users for display
+        val userNames = users.take(3).map { it["name"] as String }.toTypedArray()
+        val userActivities = users.take(3).map { it["activity"] as String }.toTypedArray()
+        
+        bundle.putStringArray(OverlayService.EXTRA_USER_NAMES, userNames)
+        bundle.putStringArray(OverlayService.EXTRA_USER_ACTIVITIES, userActivities)
+        
+        Log.d(TAG, "Extracted ${userNames.size} users for overlay")
         
         return bundle
     }

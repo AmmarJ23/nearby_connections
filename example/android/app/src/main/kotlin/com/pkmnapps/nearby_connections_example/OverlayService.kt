@@ -26,8 +26,8 @@ class OverlayService : Service() {
         const val EXTRA_SELF_NAME = "selfName"
         const val EXTRA_SELF_ACTIVITY = "selfActivity"
         const val EXTRA_CONNECTED_COUNT = "connectedCount"
-        const val EXTRA_FIRST_USER_NAME = "firstUserName"
-        const val EXTRA_FIRST_USER_ACTIVITY = "firstUserActivity"
+        const val EXTRA_USER_NAMES = "userNames"
+        const val EXTRA_USER_ACTIVITIES = "userActivities"
     }
 
     override fun onCreate() {
@@ -123,24 +123,15 @@ class OverlayService : Service() {
             val selfName = intent.getStringExtra(EXTRA_SELF_NAME) ?: "Me"
             val selfActivity = intent.getStringExtra(EXTRA_SELF_ACTIVITY) ?: "Idle"
             val connectedCount = intent.getIntExtra(EXTRA_CONNECTED_COUNT, 0)
-            val firstUserName = intent.getStringExtra(EXTRA_FIRST_USER_NAME)
-            val firstUserActivity = intent.getStringExtra(EXTRA_FIRST_USER_ACTIVITY)
+            val userNames = intent.getStringArrayExtra(EXTRA_USER_NAMES) ?: emptyArray()
+            val userActivities = intent.getStringArrayExtra(EXTRA_USER_ACTIVITIES) ?: emptyArray()
 
-            Log.d(TAG, "Updating overlay: $selfName - $selfActivity, connected: $connectedCount")
+            Log.d(TAG, "Updating overlay: $selfName - $selfActivity, connected: $connectedCount, users: ${userNames.size}")
 
             view.findViewById<TextView>(R.id.overlay_self_name)?.text = selfName
             view.findViewById<TextView>(R.id.overlay_self_activity)?.text = selfActivity
             view.findViewById<TextView>(R.id.overlay_connected_count)?.text = "$connectedCount"
             
-            val userContainer = view.findViewById<LinearLayout>(R.id.overlay_user_container)
-            if (firstUserName != null && connectedCount > 0) {
-                userContainer?.visibility = View.VISIBLE
-                view.findViewById<TextView>(R.id.overlay_user_name)?.text = firstUserName
-                view.findViewById<TextView>(R.id.overlay_user_activity)?.text = firstUserActivity ?: "Idle"
-            } else {
-                userContainer?.visibility = View.GONE
-            }
-
             // Update activity icon based on activity type
             val activityIcon = view.findViewById<ImageView>(R.id.overlay_activity_icon)
             val iconRes = when (selfActivity.lowercase()) {
@@ -155,7 +146,57 @@ class OverlayService : Service() {
             }
             activityIcon?.setImageResource(iconRes)
             
-            Log.d(TAG, "Overlay updated: $selfName - $selfActivity, connected: $connectedCount")
+            // Show/hide users container
+            val usersContainer = view.findViewById<LinearLayout>(R.id.overlay_users_container)
+            if (connectedCount > 0 && userNames.isNotEmpty()) {
+                usersContainer?.visibility = View.VISIBLE
+                
+                // Update user 1
+                val user1Container = view.findViewById<LinearLayout>(R.id.overlay_user1_container)
+                if (userNames.isNotEmpty()) {
+                    user1Container?.visibility = View.VISIBLE
+                    view.findViewById<TextView>(R.id.overlay_user1_name)?.text = userNames[0]
+                    view.findViewById<TextView>(R.id.overlay_user1_activity)?.text = 
+                        if (userActivities.isNotEmpty()) userActivities[0] else "Idle"
+                } else {
+                    user1Container?.visibility = View.GONE
+                }
+                
+                // Update user 2
+                val user2Container = view.findViewById<LinearLayout>(R.id.overlay_user2_container)
+                if (userNames.size > 1) {
+                    user2Container?.visibility = View.VISIBLE
+                    view.findViewById<TextView>(R.id.overlay_user2_name)?.text = userNames[1]
+                    view.findViewById<TextView>(R.id.overlay_user2_activity)?.text = 
+                        if (userActivities.size > 1) userActivities[1] else "Idle"
+                } else {
+                    user2Container?.visibility = View.GONE
+                }
+                
+                // Update user 3
+                val user3Container = view.findViewById<LinearLayout>(R.id.overlay_user3_container)
+                if (userNames.size > 2) {
+                    user3Container?.visibility = View.VISIBLE
+                    view.findViewById<TextView>(R.id.overlay_user3_name)?.text = userNames[2]
+                    view.findViewById<TextView>(R.id.overlay_user3_activity)?.text = 
+                        if (userActivities.size > 2) userActivities[2] else "Idle"
+                } else {
+                    user3Container?.visibility = View.GONE
+                }
+                
+                // Show more users indicator
+                val moreUsers = view.findViewById<TextView>(R.id.overlay_more_users)
+                if (connectedCount > 3) {
+                    moreUsers?.visibility = View.VISIBLE
+                    moreUsers?.text = "+${connectedCount - 3} more"
+                } else {
+                    moreUsers?.visibility = View.GONE
+                }
+            } else {
+                usersContainer?.visibility = View.GONE
+            }
+            
+            Log.d(TAG, "Overlay updated successfully")
         }
     }
 
